@@ -43,3 +43,6 @@ coverage.xml
 # Local env
 .env
 .env.*
+
+# lock files
+uv.lock
