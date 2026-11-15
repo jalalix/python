@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jalalix"
-version = "0.1.0"
+version = "0.2.0"
 description = "Jalali (Persian/Shamsi) calendar for Python. Pure Python, no runtime dependencies."
 readme = "README.md"
 license = "MIT"
