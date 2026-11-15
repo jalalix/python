@@ -1,4 +1,4 @@
-"""JalaliX — Jalali (Persian / Shamsi) calendar for Python."""
+"""JalaliX - Jalali (Persian / Shamsi) calendar for Python."""
 
 from .jalalix import JalaliX
 

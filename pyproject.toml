@@ -43,6 +43,7 @@ Homepage = "https://jalalix.com"
 Documentation = "https://jalalix.com"
 Repository = "https://github.com/jalalix/python"
 Issues = "https://github.com/jalalix/python/issues"
+Funding = "https://opencollective.com/jalalix"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]

@@ -1,4 +1,4 @@
-"""JalaliX — Jalali (Persian / Shamsi) calendar for Python."""
+"""JalaliX - Jalali (Persian / Shamsi) calendar for Python."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ class JalaliX:
     """Jalali calendar wrapper around a millisecond Unix timestamp + IANA zone."""
 
     persianNumbers = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"]
+    arabicNumbers = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"]
 
     def __init__(self, ms: Optional[int] = None) -> None:
         """Create a JalaliX instance from an optional millisecond timestamp.
@@ -648,7 +649,7 @@ class JalaliX:
         """
         normalized = JalaliX.fromPersian(str(value)).strip()
         match = re.match(
-            r"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$",
+            r"^(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$",
             normalized,
         )
         if not match:
@@ -668,6 +669,134 @@ class JalaliX:
         output.setFullYear(year, month - 1, day)
         output.setHours(hours, minutes, seconds, 0)
         return output
+
+    @staticmethod
+    def normalizeQueryDate(value: Any, options: Optional[Dict[str, Any]] = None) -> Any:
+        """Soft-normalize loose query / form date inputs into a Gregorian ``Y-m-d H:i:s`` string.
+
+        Handles empty/sentinel values (``None``, ``"null"``, ``""``, ``"undefined"``,
+        ``"Invalid Date"``, ``NaN``), unix timestamps (seconds or milliseconds, numeric
+        or numeric string), Persian/Arabic-Indic digits, ``/`` ``-`` ``.`` separators,
+        fractional seconds, optional ``Z`` / offset suffixes, and auto-detects Jalali
+        vs Gregorian by year band: years in ``jalaliYearMin``...``jalaliYearMax``
+        (default ``1``...``1899``) are treated as Jalali when the civil date is valid;
+        otherwise Gregorian.
+
+        Invalid or unrecognized values are returned cleaned (digits normalized) rather
+        than raising; sentinels and non-positive timestamps return ``None``.
+        Non-string / non-number values pass through unchanged.
+
+        Args:
+            value: Raw query value.
+            options: Optional dict with ``timezone``, ``jalaliYearMin``, ``jalaliYearMax``.
+
+        Returns:
+            ``None``, Gregorian ``Y-m-d H:i:s``, a digit-cleaned string, or the
+            original non-scalar value.
+        """
+        if isinstance(value, bool):
+            return value
+
+        is_invalid_date = isinstance(value, str) and (
+            value.lower() == "invalid date" or re.search(r"nan", value, re.IGNORECASE) is not None
+        )
+        is_invalid_date = is_invalid_date or (isinstance(value, float) and math.isnan(value))
+
+        if value is None or value == "null" or value == "" or value == "undefined" or is_invalid_date:
+            return None
+
+        if isinstance(value, (int, float)):
+            return JalaliX._normalize_query_timestamp(int(value), options)
+
+        if isinstance(value, str):
+            trimmed = value.strip()
+            if trimmed != "" and re.fullmatch(r"[+-]?\d+(\.\d+)?", trimmed):
+                return JalaliX._normalize_query_timestamp(int(float(trimmed)), options)
+
+        if not isinstance(value, str):
+            return value
+
+        digits = JalaliX.fromPersian(value)
+        digits = re.sub(r"(\d{2}:\d{2}:\d{2})\.\d+", r"\1", digits)
+
+        match = re.match(
+            r"^(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})"
+            r"(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:Z|[+-]\d{2}:?\d{2})?)?",
+            digits,
+        )
+
+        if match is None:
+            return digits
+
+        year = int(match.group(1))
+        month = int(match.group(2))
+        day = int(match.group(3))
+        hour = int(match.group(4) or 0)
+        minute = int(match.group(5) or 0)
+        second = int(match.group(6) or 0)
+
+        jalali_year_min = int((options or {}).get("jalaliYearMin", 1))
+        jalali_year_max = int((options or {}).get("jalaliYearMax", 1899))
+
+        if (
+            jalali_year_min <= year <= jalali_year_max
+            and JalaliX._is_valid_jalali_civil_date(year, month, day)
+        ):
+            try:
+                jalali_str = f"{year:04d}/{month:02d}/{day:02d} {hour:02d}:{minute:02d}:{second:02d}"
+                return JalaliX.parseJalali(jalali_str, options).format(
+                    "YYYY-MM-DD HH:mm:ss", {"calendar": "gregorian"}
+                )
+            except ValueError:
+                pass  # fall through to Gregorian / cleaned
+
+        if JalaliX._is_valid_gregorian_date(year, month, day):
+            return f"{year:04d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}:{second:02d}"
+
+        return digits
+
+    @staticmethod
+    def _normalize_query_timestamp(
+        timestamp: int, options: Optional[Dict[str, Any]] = None
+    ) -> Optional[str]:
+        """Convert a unix timestamp (seconds or ms) to a formatted Gregorian string.
+
+        Args:
+            timestamp: Unix timestamp; values ``> 9999999999`` are treated as ms.
+            options: Optional dict with ``timezone``.
+
+        Returns:
+            Gregorian ``Y-m-d H:i:s``, or ``None`` for non-positive timestamps.
+        """
+        ts = timestamp
+        if ts > 9999999999:
+            ts = ts // 1000
+        if ts <= 0:
+            return None
+        return JalaliX.create(ts * 1000, options).format(
+            "YYYY-MM-DD HH:mm:ss", {"calendar": "gregorian"}
+        )
+
+    @staticmethod
+    def _is_valid_jalali_civil_date(year: int, month: int, day: int) -> bool:
+        """Whether year/month/day is a valid Jalali civil date (year >= 1)."""
+        if year < 1 or month < 1 or month > 12 or day < 1:
+            return False
+        if month <= 6:
+            return day <= 31
+        if month <= 11:
+            return day <= 30
+        is_leap = JalaliX(0)._check_leap_year(year)
+        return day <= (30 if is_leap else 29)
+
+    @staticmethod
+    def _is_valid_gregorian_date(year: int, month: int, day: int) -> bool:
+        """Whether year/month/day is a valid Gregorian civil date."""
+        if month < 1 or month > 12 or day < 1:
+            return False
+        is_leap = (year % 4 == 0 and year % 100 != 0) or year % 400 == 0
+        days_in_month = [31, 29 if is_leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        return day <= days_in_month[month - 1]
 
     @staticmethod
     def isValidDate(value: Any) -> bool:
@@ -704,10 +833,10 @@ class JalaliX:
 
     @classmethod
     def fromPersian(cls, s: str) -> str:
-        """Convert Persian numerals (۰-۹) to Western numerals (0-9) in a string.
+        """Convert Persian (۰-۹) and Arabic-Indic (٠-٩) numerals to Western numerals (0-9).
 
         Args:
-            s: The string containing Persian numerals.
+            s: The string containing Persian or Arabic-Indic numerals.
 
         Returns:
             The string with Western numerals.
@@ -715,6 +844,7 @@ class JalaliX:
         out = s
         for i in range(10):
             out = out.replace(cls.persianNumbers[i], str(i))
+            out = out.replace(cls.arabicNumbers[i], str(i))
         return out
 
     @staticmethod
